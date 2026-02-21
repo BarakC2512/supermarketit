@@ -2,24 +2,29 @@ import streamlit as st
 import pandas as pd
 import re
 import plotly.express as px
+from streamlit_gsheets import GSheetsConnection
+from datetime import datetime
 
-# הגדרות דף בסיסיות
 st.set_page_config(page_title="מנתח הקבלות המשפחתי", layout="centered")
 
-# הזרקת CSS לעברית (RTL)
+# עיצוב RTL ושיפור נראות
 st.markdown("""
     <style>
     .reportview-container .main .block-container { direction: rtl; text-align: right; }
     div[data-testid="stText"] { direction: rtl; text-align: right; }
-    h1, h2, h3, p, span { direction: rtl; text-align: right; }
+    div[data-testid="stDataFrame"] { direction: rtl; }
+    h1, h2, h3, p, span, label { direction: rtl; text-align: right; }
+    .stButton>button { width: 100%; border-radius: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🛒 סיכום קניות משפחתי")
-st.write("הדביקו את טקסט הקבלה מ-Pairzon כאן למטה:")
+# חיבור לגוגל שיטס
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# תיבת טקסט להזנת הנתונים
-raw_text = st.text_area("הדבק כאן:", height=200, placeholder="תל אביב... סה\"כ 847.77...")
+st.title("🛒 סיכום קניות משפחתי")
+
+if 'categories' not in st.session_state:
+    st.session_state.categories = ['ירקות ופירות', 'בשר ודגים', 'חלביה', 'חטיפים ומתוקים', 'ניקיון וטואלטיקה', 'מזווה ובישול']
 
 def categorize(name):
     cat_map = {
@@ -35,41 +40,70 @@ def categorize(name):
             return cat
     return 'שונות'
 
+raw_text = st.text_area("הדבקו את טקסט הקבלה כאן:", height=150)
+
 if st.button("נתח קבלה"):
     if raw_text:
         lines = raw_text.split('\n')
         data = []
+        unknown_items = []
         for i, line in enumerate(lines):
             if "₪" in line and i > 0:
                 try:
-                    # חילוץ המחיר מהשורה
                     price_match = re.search(r"₪\s?(\d+\.\d+)", line)
                     if price_match:
                         price = float(price_match.group(1))
-                        # שם המוצר נמצא בדר"כ שורה או שתיים מעל
                         name = lines[i-1].strip()
-                        if not name or name[0].isdigit():
-                            name = lines[i-2].strip()
+                        if not name or name[0].isdigit(): name = lines[i-2].strip()
+                        if any(x in name for x in ["סה\"כ", "סכום לתשלום", "ב-", "הנחה", "ויזה", "מזומן"]): continue
                         
-                        # סינון שורות סיכום והנחות
-                        if any(x in name for x in ["סה\"כ", "סכום לתשלום", "ב-", "הנחה", "ויזה", "מזומן"]):
-                            continue
-                            
-                        data.append({"מוצר": name, "מחיר": price, "קטגוריה": categorize(name)})
-                except:
-                    continue
+                        cat = categorize(name)
+                        data.append({"מוצר": name, "קטגוריה": cat, "מחיר": price})
+                        if cat == 'שונות': unknown_items.append(name)
+                except: continue
+        st.session_state.df = pd.DataFrame(data)
+        st.session_state.unknown_items = unknown_items
+
+# טיפול במוצרים לא מזוהים
+if 'unknown_items' in st.session_state and st.session_state.unknown_items:
+    with st.expander("🔍 מצטער, לא הצלחתי לסווג את המוצרים הבאים, תוכל לעזור לי ללמוד?", expanded=True):
+        for item in st.session_state.unknown_items:
+            selected_cat = st.selectbox(f"סיווג עבור: {item}", st.session_state.categories + ["אחר..."], key=item)
+            if selected_cat == "אחר...":
+                new_cat = st.text_input(f"קטגוריה חדשה ל-{item}", key=f"new_{item}")
+                if new_cat: selected_cat = new_cat
+            st.session_state.df.loc[st.session_state.df['מוצר'] == item, 'קטגוריה'] = selected_cat
         
-        df = pd.DataFrame(data)
+        if st.button("סיימתי לסווג, הצג דוח"):
+            st.session_state.unknown_items = []
+            st.rerun()
+
+# הצגת הדוח
+if 'df' in st.session_state and not st.session_state.df.empty:
+    df = st.session_state.df
+    st.success(f"סה\"כ לתשלום: ₪{df['מחיר'].sum():.2f}")
+    
+    # טבלה בסדר המבוקש
+    st.table(df[['מוצר', 'קטגוריה', 'מחיר']])
+    
+    fig = px.pie(df, values='מחיר', names='קטגוריה', hole=0.3, title="התפלגות הוצאות")
+    st.plotly_chart(fig)
+
+    # משוב ושמירה
+    st.divider()
+    feedback = st.text_area("משוב למפתח (אופציונלי):")
+    if st.button("שמור נתונים ושלח משוב"):
+        # הכנת הנתונים לשמירה בגיליון
+        new_data = df.copy()
+        new_data['Timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        new_data['Feedback'] = feedback
         
-        if not df.empty:
-            st.success(f"נמצאו {len(df)} מוצרים. סה\"כ זוהה: ₪{df['מחיר'].sum():.2f}")
-            
-            # תצוגת גרף עוגה
-            fig = px.pie(df, values='מחיר', names='קטגוריה', hole=0.3, title="הוצאות לפי קטגוריה")
-            st.plotly_chart(fig)
-            
-            # טבלה מפורטת
-            st.subheader("פירוט מוצרים")
-            st.dataframe(df[['קטגוריה', 'מוצר', 'מחיר']].sort_values(by='קטגוריה'), use_container_width=True)
-        else:
-            st.error("לא הצלחתי לקרוא מוצרים. וודאו שהדבקתם את כל הטקסט מהקבלה.")
+        # עדכון הגוגל שיטס (דורש הגדרת secrets ב-Streamlit Cloud)
+        try:
+            existing_data = conn.read(worksheet="Sheet1")
+            updated_df = pd.concat([existing_data, new_data], ignore_index=True)
+            conn.update(worksheet="Sheet1", data=updated_df)
+            st.balloons()
+            st.success("הנתונים נשמרו בהצלחה! תודה על העזרה.")
+        except:
+            st.warning("הנתונים הוצגו אך לא נשמרו בגיליון (יש להגדיר חיבור לגוגל שיטס).")
