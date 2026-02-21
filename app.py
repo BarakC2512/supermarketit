@@ -93,17 +93,16 @@ if 'df' in st.session_state and not st.session_state.df.empty:
     st.divider()
     feedback = st.text_area("משוב למפתח (אופציונלי):")
     if st.button("שמור נתונים ושלח משוב"):
-        # הכנת הנתונים לשמירה בגיליון
         new_data = df.copy()
         new_data['Timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         new_data['Feedback'] = feedback
         
-        # עדכון הגוגל שיטס (דורש הגדרת secrets ב-Streamlit Cloud)
         try:
-            existing_data = conn.read(worksheet="Sheet1")
-            updated_df = pd.concat([existing_data, new_data], ignore_index=True)
-            conn.update(worksheet="Sheet1", data=updated_df)
+            # שימוש בחיבור הקיים
+            # הערה: בגרסאות חדשות של st-gsheets-connection, הפקודה היא פשוט conn.create
+            conn.update(data=new_data) 
             st.balloons()
-            st.success("הנתונים נשמרו בהצלחה! תודה על העזרה.")
-        except:
-            st.warning("הנתונים הוצגו אך לא נשמרו בגיליון (יש להגדיר חיבור לגוגל שיטס).")
+            st.success("הנתונים נשמרו בהצלחה!")
+        except Exception as e:
+            st.error(f"שגיאת חיבור: {e}")
+            st.info("וודאו שהגדרתם את ה-URL ב-Secrets ושנתתם הרשאת Editor ללינק.")
