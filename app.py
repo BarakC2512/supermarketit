@@ -4,7 +4,25 @@ import re
 import plotly.express as px
 from streamlit_gsheets import GSheetsConnection
 from datetime import datetime
+import requests
 
+def save_to_google_form(df, feedback):
+    # כאן צריך להדביק את ה-URL של ה-Form (נמצא ב-"Get pre-filled link")
+    # וגם את ה-IDs של השאלות. 
+    # אם תרצה עזרה במציאתם, רק תגיד.
+    
+    # זהו קוד פשוט ששולח את הנתונים בבת אחת:
+    form_url = "כאן_מדביקים_את_כתובת_הטופס/formResponse"
+    
+    for _, row in df.iterrows():
+        payload = {
+            "entry.123456": row['מוצר'],      # מספר ה-ID של שאלת מוצר
+            "entry.789012": row['קטגוריה'],  # מספר ה-ID של שאלת קטגוריה
+            "entry.345678": row['מחיר'],     # מספר ה-ID של שאלת מחיר
+            "entry.901234": feedback         # מספר ה-ID של שאלת פידבק
+        }
+        requests.post(form_url, data=payload)
+        
 st.set_page_config(page_title="מנתח הקבלות המשפחתי", layout="centered")
 
 # עיצוב RTL ושיפור נראות
@@ -93,16 +111,4 @@ if 'df' in st.session_state and not st.session_state.df.empty:
     st.divider()
     feedback = st.text_area("משוב למפתח (אופציונלי):")
     if st.button("שמור נתונים ושלח משוב"):
-        new_data = df.copy()
-        new_data['Timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        new_data['Feedback'] = feedback
-        
-        try:
-            # שימוש בחיבור הקיים
-            # הערה: בגרסאות חדשות של st-gsheets-connection, הפקודה היא פשוט conn.create
-            conn.update(data=new_data) 
-            st.balloons()
-            st.success("הנתונים נשמרו בהצלחה!")
-        except Exception as e:
-            st.error(f"שגיאת חיבור: {e}")
-            st.info("וודאו שהגדרתם את ה-URL ב-Secrets ושנתתם הרשאת Editor ללינק.")
+        save_to_google_form(df, feedback)
